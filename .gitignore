@@ -1,0 +1,9 @@
+# Ignore private keys
+Orion.pem
+
+# Node/Python/IDE common ignores (safe defaults)
+node_modules/
+venv/
+.env
+.DS_Store
+/.vscode/
