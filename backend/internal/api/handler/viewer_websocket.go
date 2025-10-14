@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -14,13 +15,18 @@ import (
 
 // ViewerWebSocketHandler 观众 WebSocket 处理器
 type ViewerWebSocketHandler struct {
-	broadcaster *app.SubtitleBroadcaster
+	broadcaster   *app.SubtitleBroadcaster
+	accessService *app.AccessService
 }
 
 // NewViewerWebSocketHandler 创建观众处理器
-func NewViewerWebSocketHandler(broadcaster *app.SubtitleBroadcaster) *ViewerWebSocketHandler {
+func NewViewerWebSocketHandler(
+	broadcaster *app.SubtitleBroadcaster,
+	accessService *app.AccessService,
+) *ViewerWebSocketHandler {
 	return &ViewerWebSocketHandler{
-		broadcaster: broadcaster,
+		broadcaster:   broadcaster,
+		accessService: accessService,
 	}
 }
 
@@ -91,15 +97,17 @@ func (h *ViewerWebSocketHandler) HandleViewerWebSocket(c *gin.Context) {
 // authenticateViewer 认证观众
 func (h *ViewerWebSocketHandler) authenticateViewer(conn *ws.Connection, c *gin.Context) (*domain.AuthPayload, error) {
 	// 从查询参数获取认证信息
-	token := c.Query("token")
-	activityID := c.Query("activityId")
-	language := c.Query("language")
+	token := strings.TrimSpace(c.Query("token"))
+	activityID := strings.TrimSpace(c.Query("activityId"))
+	language := strings.TrimSpace(c.Query("language"))
 
 	if token == "" || activityID == "" || language == "" {
 		return nil, http.ErrAbortHandler
 	}
 
-	// TODO: 验证 JWT token 和活动状态
+	if _, err := h.accessService.ValidateViewerSession(activityID, token, language); err != nil {
+		return nil, err
+	}
 
 	return &domain.AuthPayload{
 		Token:      token,

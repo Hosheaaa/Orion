@@ -5,10 +5,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hoshea/orion-backend/internal/app"
 )
 
 // AuthRequired JWT 认证中间件
-func AuthRequired() gin.HandlerFunc {
+func AuthRequired(authService *app.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -21,9 +22,8 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		// 解析 Bearer token
 		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    "UNAUTHORIZED",
 				"message": "认证令牌格式错误",
@@ -33,22 +33,19 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		token := parts[1]
-
-		// TODO: 验证 JWT token
-		// 现在先简单验证非空
-		if token == "" {
+		claims, err := authService.ValidateAccessToken(parts[1])
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    "UNAUTHORIZED",
-				"message": "无效的认证令牌",
+				"message": err.Error(),
 				"data":    nil,
 			})
 			c.Abort()
 			return
 		}
 
-		// 将用户信息存入上下文
-		c.Set("user_id", "admin") // TODO: 从 JWT 中解析
+		c.Set("user_id", claims.UserID)
+		c.Set("user_role", claims.Role)
 		c.Next()
 	}
 }

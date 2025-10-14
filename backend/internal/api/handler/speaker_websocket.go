@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -24,15 +25,21 @@ var upgrader = websocket.Upgrader{
 
 // SpeakerWebSocketHandler 演讲者 WebSocket 处理器
 type SpeakerWebSocketHandler struct {
-	pipeline    *app.TranslationPipeline
-	broadcaster *app.SubtitleBroadcaster
+	pipeline      *app.TranslationPipeline
+	broadcaster   *app.SubtitleBroadcaster
+	accessService *app.AccessService
 }
 
 // NewSpeakerWebSocketHandler 创建演讲者处理器
-func NewSpeakerWebSocketHandler(pipeline *app.TranslationPipeline, broadcaster *app.SubtitleBroadcaster) *SpeakerWebSocketHandler {
+func NewSpeakerWebSocketHandler(
+	pipeline *app.TranslationPipeline,
+	broadcaster *app.SubtitleBroadcaster,
+	accessService *app.AccessService,
+) *SpeakerWebSocketHandler {
 	return &SpeakerWebSocketHandler{
-		pipeline:    pipeline,
-		broadcaster: broadcaster,
+		pipeline:      pipeline,
+		broadcaster:   broadcaster,
+		accessService: accessService,
 	}
 }
 
@@ -52,7 +59,7 @@ func (h *SpeakerWebSocketHandler) HandleSpeakerWebSocket(c *gin.Context) {
 	log.Printf("Speaker WebSocket connected: %s", connectionID)
 
 	// 等待认证消息
-	authPayload, err := h.authenticate(wsConn, c)
+	authPayload, activity, err := h.authenticate(wsConn, c)
 	if err != nil {
 		log.Printf("Authentication failed: %v", err)
 		wsConn.SendJSON(domain.MessageTypeError, domain.ErrorPayload{
@@ -67,7 +74,7 @@ func (h *SpeakerWebSocketHandler) HandleSpeakerWebSocket(c *gin.Context) {
 	session, err := h.pipeline.StartSession(
 		authPayload.ActivityID,
 		authPayload.Language,
-		[]string{"en", "ja", "es"}, // TODO: 从活动配置中获取目标语言
+		activity.TargetLanguages,
 	)
 	if err != nil {
 		log.Printf("Failed to start translation session: %v", err)
@@ -106,23 +113,26 @@ func (h *SpeakerWebSocketHandler) HandleSpeakerWebSocket(c *gin.Context) {
 }
 
 // authenticate 认证
-func (h *SpeakerWebSocketHandler) authenticate(conn *ws.Connection, c *gin.Context) (*domain.AuthPayload, error) {
+func (h *SpeakerWebSocketHandler) authenticate(conn *ws.Connection, c *gin.Context) (*domain.AuthPayload, *domain.Activity, error) {
 	// 从查询参数获取认证信息
-	token := c.Query("token")
-	activityID := c.Query("activityId")
-	language := c.Query("language")
+	token := strings.TrimSpace(c.Query("token"))
+	activityID := strings.TrimSpace(c.Query("activityId"))
+	language := strings.TrimSpace(c.Query("language"))
 
 	if token == "" || activityID == "" || language == "" {
-		return nil, http.ErrAbortHandler
+		return nil, nil, http.ErrAbortHandler
 	}
 
-	// TODO: 验证 JWT token
+	activity, err := h.accessService.ValidateSpeakerSession(activityID, token, language)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return &domain.AuthPayload{
 		Token:      token,
 		ActivityID: activityID,
 		Language:   language,
-	}, nil
+	}, activity, nil
 }
 
 // handleSpeakerMessage 处理演讲者消息

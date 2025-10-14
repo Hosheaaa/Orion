@@ -15,16 +15,24 @@ import (
 
 // SetupRouter 设置路由
 func SetupRouter(cfg *config.Config) *gin.Engine {
+	// 初始化认证服务
+	authService, err := app.NewAuthService(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize auth service: %v", err)
+	}
+	authHandler := handler.NewAuthHandler(authService)
+
 	// 初始化依赖
 	activityRepo := repository.NewMemoryActivityRepository()
 	activityService := app.NewActivityService(activityRepo, cfg)
 	activityHandler := handler.NewActivityHandler(activityService)
+	accessService := app.NewAccessService(activityRepo, cfg.ViewerBaseURL)
+	managementHandler := handler.NewManagementHandler(accessService)
 
 	// 初始化翻译管线（如果 API Key 存在）
 	var translationPipeline *app.TranslationPipeline
-	var err error
 	if cfg.Google.STTAPIKey != "" && cfg.Google.TranslateAPIKey != "" {
-		translationPipeline, err = app.NewTranslationPipeline(
+		tp, err := app.NewTranslationPipeline(
 			context.Background(),
 			cfg.Google.STTAPIKey,
 			cfg.Google.TranslateAPIKey,
@@ -32,6 +40,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		if err != nil {
 			log.Printf("Warning: Failed to initialize translation pipeline: %v", err)
 		} else {
+			translationPipeline = tp
 			log.Println("Translation pipeline initialized successfully")
 		}
 	}
@@ -44,8 +53,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	var viewerWSHandler *handler.ViewerWebSocketHandler
 
 	if translationPipeline != nil {
-		speakerWSHandler = handler.NewSpeakerWebSocketHandler(translationPipeline, subtitleBroadcaster)
-		viewerWSHandler = handler.NewViewerWebSocketHandler(subtitleBroadcaster)
+		speakerWSHandler = handler.NewSpeakerWebSocketHandler(translationPipeline, subtitleBroadcaster, accessService)
+		viewerWSHandler = handler.NewViewerWebSocketHandler(subtitleBroadcaster, accessService)
 		log.Println("WebSocket handlers initialized")
 	}
 	// 根据环境设置 Gin 模式
@@ -56,7 +65,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	router := gin.Default()
 
 	// 全局中间件
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg.Server.AllowedOrigins))
 	router.Use(middleware.RequestID())
 
 	// 健康检查
@@ -73,13 +82,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		// 认证路由
 		auth := v1.Group("/auth")
 		{
-			auth.POST("/login", handler.Login)
-			auth.POST("/refresh", handler.RefreshToken)
+			auth.POST("/login", authHandler.Login)
+			auth.POST("/refresh", authHandler.Refresh)
 		}
 
 		// 活动路由（需要认证）
 		activities := v1.Group("/activities")
-		activities.Use(middleware.AuthRequired())
+		activities.Use(middleware.AuthRequired(authService))
 		{
 			activities.GET("", activityHandler.ListActivities)
 			activities.POST("", activityHandler.CreateActivity)
@@ -92,31 +101,31 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 		// 令牌路由
 		tokens := v1.Group("/activities/:id/tokens")
-		tokens.Use(middleware.AuthRequired())
+		tokens.Use(middleware.AuthRequired(authService))
 		{
-			tokens.POST("/speaker", handler.GenerateSpeakerToken)
-			tokens.POST("/viewer", handler.GenerateViewerToken)
-			tokens.GET("", handler.ListTokens)
+			tokens.POST("/speaker", managementHandler.GenerateSpeakerToken)
+			tokens.POST("/viewer", managementHandler.GenerateViewerToken)
+			tokens.GET("", managementHandler.ListTokens)
 		}
 
 		// 观众入口路由
 		viewerEntry := v1.Group("/activities/:id/viewer-entry")
-		viewerEntry.Use(middleware.AuthRequired())
+		viewerEntry.Use(middleware.AuthRequired(authService))
 		{
-			viewerEntry.GET("", handler.GetViewerEntry)
-			viewerEntry.POST("/revoke", handler.RevokeViewerEntry)
-			viewerEntry.POST("/activate", handler.ActivateViewerEntry)
+			viewerEntry.GET("", managementHandler.GetViewerEntry)
+			viewerEntry.POST("/revoke", managementHandler.RevokeViewerEntry)
+			viewerEntry.POST("/activate", managementHandler.ActivateViewerEntry)
 		}
 
 		// 文件上传
 		uploads := v1.Group("/uploads")
-		uploads.Use(middleware.AuthRequired())
+		uploads.Use(middleware.AuthRequired(authService))
 		{
-			uploads.POST("/cover", handler.UploadCover)
+			uploads.POST("/cover", managementHandler.UploadCover)
 		}
 
 		// 语言列表
-		v1.GET("/languages", handler.GetLanguages)
+		v1.GET("/languages", managementHandler.GetLanguages)
 	}
 
 	// WebSocket 路由

@@ -28,12 +28,61 @@ func main() {
 	fmt.Println("=== 测试 Google Translation API ===")
 	testTranslationAPI(ctx, translateAPIKey)
 
+	// 测试 STT API
+	fmt.Println("\n=== 测试 Google Speech-to-Text API ===")
+	testSTTAPI(ctx, sttAPIKey)
+
 	fmt.Println("\n=== 测试完成 ===")
 	fmt.Println("\n提示：")
 	fmt.Println("1. 如果遇到 403 错误，请确认已在 Google Cloud Console 中启用 API")
 	fmt.Println("2. API 启用后可能需要等待 5-10 分钟才能生效")
 	fmt.Println("3. 确认 API Key 有正确的权限和配额")
 	fmt.Println("4. 如果是新项目，可能需要启用计费")
+}
+
+func testSTTAPI(ctx context.Context, apiKey string) {
+	client, err := google.NewSTTClient(ctx, apiKey)
+	if err != nil {
+		log.Fatalf("创建 STT 客户端失败: %v", err)
+	}
+	defer client.Close()
+
+	audioStream := make(chan []byte, 1)
+	results := make(chan google.RecognitionResult, 10)
+
+	// 构造 0.5 秒的静音音频 (16kHz, 16bit LINEAR16)
+	silentSamples := make([]byte, 16000) // 8000 采样点 * 2 字节
+	audioStream <- silentSamples
+	close(audioStream)
+
+	err = client.StreamingRecognize(
+		ctx,
+		audioStream,
+		google.StreamingRecognizeConfig{
+			LanguageCode:               "en-US",
+			SampleRateHertz:            16000,
+			EnableAutomaticPunctuation: true,
+		},
+		results,
+	)
+
+	close(results)
+
+	if err != nil {
+		log.Printf("语音识别调用失败: %v", err)
+		log.Println("可能原因：API 未启用、凭据权限不足、或音频数据格式不符合要求。")
+		return
+	}
+
+	var count int
+	for res := range results {
+		count++
+		fmt.Printf("识别结果：%s (final=%v, confidence=%f)\n", res.Transcript, res.IsFinal, res.Confidence)
+	}
+
+	if count == 0 {
+		fmt.Println("✅ STT 客户端调用完成（静音样本未产生识别结果，但连接成功）")
+	}
 }
 
 func testTranslationAPI(ctx context.Context, apiKey string) {

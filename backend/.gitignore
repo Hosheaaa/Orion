@@ -23,6 +23,9 @@ secrets/
 *.key
 *.json
 
+# Go 构建缓存
+.gocache/
+
 # IDE
 .vscode/
 .idea/

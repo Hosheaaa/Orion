@@ -14,7 +14,7 @@
 ```
 
 ## 2. 鉴权机制
-- 管理员端：HTTP Header `Authorization: Bearer <JWT>`。
+- 管理员端：HTTP Header `Authorization: Bearer <JWT>`，JWT 由后台服务基于本地密钥（HS256）签发，默认有效期 15 分钟，可通过环境变量调整。
 - 演讲者/观众：后台生成的 JWT 或邀请码换取的临时令牌，由前端短期存储。
 - WebSocket 握手：在 Query 或 Header 中携带 `token`、`activityId`，必要时附带 `inviteCode`。
 
@@ -23,12 +23,28 @@
 ### 3.1 管理员登录
 - `POST /api/v1/auth/login`
 - 请求：`{ "username": "admin", "password": "***" }`
-- 响应：`{ "accessToken": "...", "refreshToken": "...", "expiresIn": 7200 }`
+- 响应：
+```json
+{
+  "accessToken": "...",
+  "refreshToken": "...",
+  "expiresIn": 900
+}
+```
+- 说明：`expiresIn` 单位秒，对应 `ACCESS_TOKEN_TTL` 配置；刷新令牌默认有效期 7 天。
 
 ### 3.2 刷新令牌
 - `POST /api/v1/auth/refresh`
 - 请求：`{ "refreshToken": "..." }`
-- 响应：`{ "accessToken": "...", "expiresIn": 7200 }`
+- 响应：
+```json
+{
+  "accessToken": "...",
+  "refreshToken": "...",
+  "expiresIn": 900
+}
+```
+- 说明：刷新操作会旋转刷新令牌（旧值立即失效）。
 
 ### 3.3 活动列表
 - `GET /api/v1/activities`
@@ -75,8 +91,9 @@
 
 ### 3.10 生成观众邀请码
 - `POST /api/v1/activities/{id}/tokens/viewer`
-- 请求：`{ "maxAudience": 50, "ttlMinutes": 120 }`
+- 请求（可选字段）：`{ "maxAudience": 50, "ttlMinutes": 120 }`
 - 响应：`{ "code": "ABCDE", "expiresAt": "..." }`
+- 说明：未传 body 时使用默认有效期（120 分钟）且不限制观众数量；新邀请码生成后旧邀请码会被标记为 revoked。
 
 ### 3.11 查询令牌列表
 - `GET /api/v1/activities/{id}/tokens`
@@ -84,8 +101,7 @@
 
 ### 3.12 上传封面图片
 - `POST /api/v1/uploads/cover`
-- 请求：`multipart/form-data`，字段 `file`
-- 响应：`{ "url": "https://..." }`
+- 当前状态：功能占位，接口返回 501，提示“封面上传功能尚未接入文件存储”。
 
 ### 3.13 获取语言列表
 - `GET /api/v1/languages`
@@ -93,26 +109,28 @@
 
 ### 3.14 获取观众入口二维码
 - `GET /api/v1/activities/{id}/viewer-entry`
-- 查询参数：`format`（可选：`svg`/`png`/`base64`，默认 `png`）。
 - 响应：
 ```json
 {
+  "activityId": "uuid",
   "shareUrl": "https://viewer.example.com/activity/uuid?code=ABCDE",
-  "qrType": "png",
-  "qrContent": "data:image/png;base64,....",
-  "status": "active"
+  "qrType": "text",
+  "qrContent": "data:text/plain;base64,Li4u",
+  "status": "active",
+  "updatedAt": "2024-08-01T12:00:00Z"
 }
 ```
+- 说明：当前版本返回文本格式的 QR 数据 URL 占位，后续将接入二维码图片生成。
 
 ### 3.15 失效观众入口二维码
 - `POST /api/v1/activities/{id}/viewer-entry/revoke`
-- 请求：`{ "reason": "MANUAL" }`
-- 响应：`{ "status": "revoked" }`
+- 响应：`{ "status": "revoked", "updatedAt": "..." }`
 - 说明：活动关闭时可由系统自动调用，或管理员手动触发。
 
 ### 3.16 重新启用观众入口二维码
 - `POST /api/v1/activities/{id}/viewer-entry/activate`
-- 响应：`{ "status": "active", "qrContent": "data:image/png;base64,..." }`
+- 响应：`{ "status": "active", "shareUrl": "...", "qrContent": "data:text/plain;base64,...", "updatedAt": "..." }`
+- 说明：若最新邀请码已过期会返回 400 并提示重新生成。
 - 说明：仅在活动重新开放时使用。
 
 ## 4. WebSocket 接口
@@ -175,9 +193,9 @@
 
 ## 6. 安全要求
 - 所有接口必须通过 HTTPS/WSS。
-- 对敏感接口（生成令牌、上传资源、二维码失效/启用）增加速率限制与审计日志。
-- JWT 使用非对称密钥签名（RS256），便于多实例校验。
-- 二维码链接与活动状态绑定，活动关闭后自动失效并返回提示页面。
+- 对敏感接口（生成令牌、二维码启停）建议增加速率限制与审计日志。
+- JWT 采用 HS256 与本地私钥实现，需确保密钥长度与安全存储；如需多实例部署，可在后续迭代切换至非对称加签。
+- 二维码链接与活动状态绑定，活动关闭后需调用 revoke 接口保证入口失效。
 
 ## 7. 版本控制
 - 使用 Accept Header 或 URL 版本号（当前使用 `/api/v1`）。

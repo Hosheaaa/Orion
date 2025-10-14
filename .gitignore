@@ -1,6 +1,11 @@
 # Ignore private keys
 Orion.pem
 
+# Ignore Unimportant files
+CLAUDE.md
+AGENTS.md
+.claude/
+
 # Node/Python/IDE common ignores (safe defaults)
 node_modules/
 venv/
