@@ -1,0 +1,10 @@
+{
+  "name": "orion-front-end",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@8.15.4",
+  "scripts": {
+    "lint": "echo \"请在各子项目中运行 lint\"",
+    "build": "echo \"请在各子项目中运行 build\""
+  }
+}

@@ -5,6 +5,7 @@ Orion.pem
 CLAUDE.md
 AGENTS.md
 .claude/
+.serena/
 
 # Node/Python/IDE common ignores (safe defaults)
 node_modules/

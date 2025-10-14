@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -10,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/hoshea/orion-backend/internal/domain"
 	"github.com/hoshea/orion-backend/internal/infra/google"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TranslationPipeline 翻译管线服务
@@ -26,11 +29,18 @@ type PipelineSession struct {
 	ActivityID      string
 	SourceLanguage  string
 	TargetLanguages []string
-	AudioInput      chan []byte                       // 音频输入
-	SubtitleOutput  chan *domain.Subtitle             // 字幕输出（包含所有语言翻译）
+	AudioInput      chan []byte           // 音频输入
+	SubtitleOutput  chan *domain.Subtitle // 字幕输出（包含所有语言翻译）
 	cancel          context.CancelFunc
 	ctx             context.Context
 }
+
+const (
+	// streamRestartInterval 单个流的最长持续时间，必须小于 Google 官方 5 分钟限制
+	streamRestartInterval = 4*time.Minute + 30*time.Second
+	// streamErrorBackoff 遇到异常时的简单退避
+	streamErrorBackoff = time.Second
+)
 
 // NewTranslationPipeline 创建翻译管线
 func NewTranslationPipeline(ctx context.Context, sttAPIKey, translateAPIKey string) (*TranslationPipeline, error) {
@@ -98,7 +108,7 @@ func (p *TranslationPipeline) StartSession(
 		ActivityID:      activityID,
 		SourceLanguage:  sourceLanguage,
 		TargetLanguages: targetLanguages,
-		AudioInput:      make(chan []byte, 100),      // 缓冲音频数据
+		AudioInput:      make(chan []byte, 100),          // 缓冲音频数据
 		SubtitleOutput:  make(chan *domain.Subtitle, 50), // 缓冲字幕
 		ctx:             ctx,
 		cancel:          cancel,
@@ -156,31 +166,20 @@ func (p *TranslationPipeline) processSession(session *PipelineSession) {
 	sttResults := make(chan google.RecognitionResult, 50)
 
 	// 启动 STT 识别
-	go func() {
-		defer close(sttResults)
-
-		config := google.StreamingRecognizeConfig{
-			LanguageCode:               session.SourceLanguage,
-			SampleRateHertz:            16000,
-			EnableAutomaticPunctuation: true,
-		}
-
-		if err := p.sttClient.StreamingRecognize(
-			session.ctx,
-			session.AudioInput,
-			config,
-			sttResults,
-		); err != nil {
-			log.Printf("STT error for activity %s: %v", session.ActivityID, err)
-		}
-	}()
+	go p.streamRecognitionWithRestart(session, sttResults)
 
 	// 处理 STT 结果并翻译
+	var lastFinalTranscript string
 	for result := range sttResults {
 		// 只处理最终结果
 		if !result.IsFinal {
 			continue
 		}
+		// 跳过重复结果，避免流重启时重复翻译
+		if result.Transcript == "" || result.Transcript == lastFinalTranscript {
+			continue
+		}
+		lastFinalTranscript = result.Transcript
 
 		// 翻译到目标语言
 		translations, err := p.translationClient.Translate(
@@ -233,5 +232,84 @@ func (s *PipelineSession) SendAudio(audioData []byte) error {
 		return fmt.Errorf("session closed")
 	default:
 		return fmt.Errorf("audio buffer full")
+	}
+}
+
+// streamRecognitionWithRestart 负责维持 STT 流并定期重启，确保长会话稳定性
+func (p *TranslationPipeline) streamRecognitionWithRestart(
+	session *PipelineSession,
+	results chan<- google.RecognitionResult,
+) {
+	defer close(results)
+
+	config := google.StreamingRecognizeConfig{
+		LanguageCode:               session.SourceLanguage,
+		SampleRateHertz:            16000,
+		EnableAutomaticPunctuation: true,
+	}
+
+	for {
+		// 会话已经结束，直接退出
+		if session.ctx.Err() != nil {
+			return
+		}
+
+		streamCtx, cancel := context.WithCancel(session.ctx)
+		errCh := make(chan error, 1)
+
+		go func() {
+			errCh <- p.sttClient.StreamingRecognize(
+				streamCtx,
+				session.AudioInput,
+				config,
+				results,
+			)
+		}()
+
+		timer := time.NewTimer(streamRestartInterval)
+		var err error
+
+		select {
+		case <-session.ctx.Done():
+			cancel()
+			err = <-errCh
+			timer.Stop()
+			return
+		case err = <-errCh:
+			timer.Stop()
+		case <-timer.C:
+			// 达到流持续时长上限，主动重启
+			cancel()
+			err = <-errCh
+		}
+
+		// 确保 timer 被停止并释放资源
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		cancel()
+
+		switch {
+		case err == nil:
+			// 正常结束，说明音频源关闭或服务器主动断开，结束循环
+			return
+		case errors.Is(err, context.Canceled):
+			// 主动取消触发的退出，若会话仍在继续则进行下一轮
+			continue
+		case status.Code(err) == codes.Canceled:
+			// gRPC 侧取消，同样视为预期情况
+			continue
+		default:
+			log.Printf("STT stream error for activity %s: %v", session.ActivityID, err)
+			// 退避后重试，避免瞬时重复创建连接
+			select {
+			case <-time.After(streamErrorBackoff):
+			case <-session.ctx.Done():
+				return
+			}
+		}
 	}
 }
