@@ -1,16 +1,15 @@
 import { useQuery } from "@tanstack/vue-query";
 import {
   fetchHeroInsights,
-  fetchTodayActivities,
-  fetchConnectionSnapshot,
   fetchSubtitleHistory,
   fetchGuidanceChecklist
 } from "@/services/mockSpeakerService";
+import { fetchConsoleActivities } from "@/services/speakerConsoleService";
 
 export function useSpeakerActivities() {
   return useQuery({
     queryKey: ["speaker", "activities"],
-    queryFn: fetchTodayActivities,
+    queryFn: fetchConsoleActivities,
     staleTime: 1000 * 60
   });
 }
@@ -19,14 +18,6 @@ export function useHeroInsights() {
   return useQuery({
     queryKey: ["speaker", "hero-insights"],
     queryFn: fetchHeroInsights
-  });
-}
-
-export function useConnectionSnapshot() {
-  return useQuery({
-    queryKey: ["speaker", "connection"],
-    queryFn: fetchConnectionSnapshot,
-    refetchInterval: 1000 * 20
   });
 }
 

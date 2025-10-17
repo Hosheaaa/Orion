@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +57,10 @@ type CacheConfig struct {
 
 // Load 加载配置（从环境变量）
 func Load() (*Config, error) {
+	if err := loadEnvFileOnce(".env"); err != nil {
+		return nil, err
+	}
+
 	port := getEnvAsInt("APP_PORT", 8080)
 	env := getEnv("APP_ENV", "development")
 	allowedOrigins := getEnvAsStringSlice("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000"})
@@ -87,6 +93,85 @@ func Load() (*Config, error) {
 		},
 		ViewerBaseURL: getEnv("VIEWER_BASE_URL", "http://localhost:3000"),
 	}, nil
+}
+
+var envFileLoaded = false
+
+func loadEnvFileOnce(path string) error {
+	if envFileLoaded {
+		return nil
+	}
+
+	paths := []string{path, "../" + path, "backend/" + path}
+	for _, p := range paths {
+		if err := loadEnvFile(p); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+	}
+
+	envFileLoaded = true
+	return nil
+}
+
+func loadEnvFile(path string) error {
+	if path == "" {
+		return nil
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Open(absPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+
+		if idx := strings.Index(value, " #"); idx > -1 {
+			value = strings.TrimSpace(value[:idx])
+		}
+
+		if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+
+	return scanner.Err()
 }
 
 // 工具函数：获取环境变量

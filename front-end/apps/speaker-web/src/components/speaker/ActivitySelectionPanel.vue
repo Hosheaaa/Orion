@@ -4,7 +4,7 @@
       <div>
         <h2 id="activity-selector-heading">活动排期 · 今日可选</h2>
         <p>
-          系统自动匹配今日绑定的活动场次，选择后将同步加载目标语言、受众规模与二维码状态，并提醒对应的术语表。
+          系统自动匹配今日绑定的活动场次，选择后将同步加载目标语言、状态与观众端入口，并提醒对应的术语表。
         </p>
       </div>
       <button class="panel__ghost" type="button">查看历史场次</button>
@@ -22,10 +22,12 @@
         <header class="activity-card__header">
           <div>
             <h3>{{ activity.title }}</h3>
-            <span class="activity-card__sub">{{ formatDate(activity.scheduledAt) }} · {{ activity.venue }}</span>
+            <span class="activity-card__sub">
+              {{ formatDate(activity.startTime) }} · {{ renderStatus(activity.status) }} · {{ activity.speaker }}
+            </span>
           </div>
           <span class="activity-card__badge">
-            预计 {{ activity.expectedAudience }} 人
+            输入语种：{{ formatLanguage(activity.inputLanguage) }}
           </span>
         </header>
         <p class="activity-card__description">
@@ -33,7 +35,7 @@
         </p>
         <footer class="activity-card__footer">
           <div class="activity-card__langs">
-            <span v-for="lang in activity.translationLanguages" :key="lang">{{ lang }}</span>
+            <span v-for="lang in activity.displayLanguages" :key="lang">{{ lang }}</span>
           </div>
           <div class="activity-card__cta">
             <span>进入彩排模式</span>
@@ -55,17 +57,27 @@
 </template>
 
 <script setup lang="ts">
-import type { ActivitySummary } from "@/stores/speakerSession";
 import { computed } from "vue";
 import { useSpeakerSessionStore } from "@/stores/speakerSession";
+import type { ConsoleActivity } from "@/services/speakerConsoleService";
 
-const props = defineProps<{ activities: ActivitySummary[] }>();
+const props = defineProps<{ activities: ConsoleActivity[] }>();
+const LANGUAGE_NAME_MAP: Record<string, string> = {
+  "zh-CN": "简体中文",
+  "zh-TW": "繁体中文",
+  en: "英语",
+  ja: "日语",
+  ko: "韩语",
+  es: "西班牙语",
+  fr: "法语",
+  de: "德语"
+};
 
 const store = useSpeakerSessionStore();
 
 const selectedActivityId = computed(() => store.currentActivity?.id ?? "");
 
-function handleSelect(activity: ActivitySummary) {
+function handleSelect(activity: ConsoleActivity) {
   if (selectedActivityId.value === activity.id) return;
   store.selectActivity(activity);
 }
@@ -78,6 +90,23 @@ function formatDate(iso: string) {
     month: "2-digit",
     day: "2-digit"
   });
+}
+
+function formatLanguage(code: string) {
+  return LANGUAGE_NAME_MAP[code] ?? code;
+}
+
+function renderStatus(status: string) {
+  switch (status) {
+    case "draft":
+      return "草稿";
+    case "published":
+      return "已发布";
+    case "closed":
+      return "已关闭";
+    default:
+      return status;
+  }
 }
 </script>
 

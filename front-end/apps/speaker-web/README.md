@@ -10,11 +10,12 @@
 ## 快速开始
 
 ```bash
-pnpm install        # 安装依赖
+cp .env.example .env # 配置 API / WebSocket 地址
+pnpm install         # 安装依赖
 pnpm --filter @orion/speaker-web dev
 ```
 
-> 提示：当前仓库为离线原型，Mock 服务位于 `src/services/mockSpeakerService.ts`，替换为真实接口后即可对接后台。
+> 提示：演讲者端已直连后端 REST 与 WebSocket 接口，默认需要后台账号密码（`/api/v1/auth/login`）以及有效的 Google API Key 才能完成端到端推流。Mock 数据仅用于仪表盘辅助模块。
 
 ## 待办事项
 

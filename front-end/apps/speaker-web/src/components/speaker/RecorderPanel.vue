@@ -107,10 +107,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import { useSpeakerSessionStore } from "@/stores/speakerSession";
+import type { MessageApi } from "naive-ui";
 
 const store = useSpeakerSessionStore();
+const message = inject<MessageApi | undefined>("naive-message");
 
 const statusText = computed(() =>
   store.isStreaming ? "推流中 · 正在向后端发送音频帧" : "待机 · 未开始推流"
@@ -120,11 +122,19 @@ const statusClass = computed(() =>
   store.isStreaming ? "is-live" : "is-idle"
 );
 
-function toggleStreaming() {
+async function toggleStreaming() {
   if (store.isStreaming) {
-    store.stopStreaming();
-  } else {
-    store.startStreaming();
+    await store.stopStreaming();
+    message?.info?.("已停止推流。");
+    return;
+  }
+
+  try {
+    await store.startStreaming();
+    message?.success?.("推流连接已建立，开始发送音频。");
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    message?.error?.(msg || "推流启动失败，请检查网络或后端配置。");
   }
 }
 

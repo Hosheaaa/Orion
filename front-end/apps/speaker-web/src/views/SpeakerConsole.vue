@@ -64,18 +64,17 @@ import PreparationChecklist from "@/components/speaker/PreparationChecklist.vue"
 import {
   useHeroInsights,
   useSpeakerActivities,
-  useConnectionSnapshot,
   useSubtitleHistory,
   useGuidanceChecklist
 } from "@/composables/useSpeakerConsoleData";
 import { useSpeakerSessionStore } from "@/stores/speakerSession";
 import type { SubtitleItem } from "@/stores/speakerSession";
+import type { ConsoleActivity } from "@/services/speakerConsoleService";
 
 const store = useSpeakerSessionStore();
 
 const { data: activitiesData } = useSpeakerActivities();
 const { data: heroMetricsData } = useHeroInsights();
-const { data: connectionData } = useConnectionSnapshot();
 const { data: subtitleHistoryData } = useSubtitleHistory();
 const { data: guidanceData } = useGuidanceChecklist();
 
@@ -86,36 +85,30 @@ watch(activitiesData, (payload) => {
   }
 });
 
-watch(connectionData, (payload) => {
-  if (!payload) return;
-  store.setConnectionSnapshot(payload);
-});
-
 watch(subtitleHistoryData, (payload) => {
   if (!payload?.length) return;
   payload.slice(0, 3).forEach((item) => store.pushSubtitle(item));
 });
 
-const { resume } = useIntervalFn(() => {
-  const base = store.isStreaming ? 0.55 : 0.3;
-  const variance = Math.random() * 0.4;
-  store.updateMicLevel(Math.min(1, base + variance));
-}, 320, { immediate: true });
+const { pause, resume } = useIntervalFn(() => {
+  const variance = Math.random() * 0.35;
+  store.updateMicLevel(Math.min(1, 0.3 + variance));
+}, 380, { immediate: true });
 
 watch(
   () => store.isStreaming,
   (isStreaming) => {
     if (isStreaming) {
-      resume();
+      pause();
     } else {
       store.updateMicLevel(0.2);
-      resume(); // 保持动画流畅，仍允许间隔更新
+      resume();
     }
   },
   { immediate: true }
 );
 
-const activities = computed(() => activitiesData.value ?? []);
+const activities = computed<ConsoleActivity[]>(() => activitiesData.value ?? []);
 const heroMetrics = computed(() => heroMetricsData.value ?? []);
 const connection = computed(() => store.connection);
 const guidance = computed(() => guidanceData.value ?? []);

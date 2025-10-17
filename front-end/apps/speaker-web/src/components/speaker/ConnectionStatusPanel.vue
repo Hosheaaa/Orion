@@ -57,6 +57,8 @@ const statusClass = computed(() => `is-${props.snapshot.status}`);
 
 const statusText = computed(() => {
   switch (props.snapshot.status) {
+    case "idle":
+      return "待机 · 未建立连接";
     case "connected":
       return "连接稳定";
     case "reconnecting":
@@ -135,6 +137,12 @@ function formatTime(iso: string) {
   color: #b91c1c;
   background: rgba(248, 113, 113, 0.18);
   border-color: rgba(248, 113, 113, 0.32);
+}
+
+.connection-panel__pill.is-idle {
+  color: #1e293b;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
 }
 
 .connection-panel__grid {

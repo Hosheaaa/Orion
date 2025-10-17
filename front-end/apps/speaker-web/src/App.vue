@@ -4,7 +4,7 @@
     :theme="lightTheme"
     abstract
   >
-    <div class="app-shell">
+    <div v-if="showShell" class="app-shell">
       <header class="app-shell__header">
         <div class="brand">
           <div class="brand__mark">Orion Live</div>
@@ -16,10 +16,10 @@
           <a class="primary-nav__item" href="#">设置</a>
         </nav>
         <div class="user-chip">
-          <span class="user-chip__avatar">陈</span>
+          <span class="user-chip__avatar">{{ userInitial }}</span>
           <div class="user-chip__meta">
-            <span class="user-chip__name">陈述 • 主讲人</span>
-            <span class="user-chip__session">GMT+8 · 创新发布会</span>
+            <span class="user-chip__name">{{ userName }}</span>
+            <span class="user-chip__session">实时演讲 • 控制台</span>
           </div>
         </div>
       </header>
@@ -27,12 +27,17 @@
         <router-view />
       </main>
     </div>
+    <router-view v-else />
   </n-config-provider>
 </template>
 
 <script setup lang="ts">
 import { lightTheme } from "naive-ui";
 import type { GlobalThemeOverrides } from "naive-ui";
+import { computed } from "vue";
+import { useRoute } from "vue-router";
+import { useAuthStore } from "@/stores/auth";
+import { storeToRefs } from "pinia";
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
@@ -42,4 +47,12 @@ const themeOverrides: GlobalThemeOverrides = {
     primaryColorSuppl: "#34d399"
   }
 };
+
+const route = useRoute();
+const auth = useAuthStore();
+const { profile, isAuthenticated } = storeToRefs(auth);
+
+const showShell = computed(() => isAuthenticated.value && route.meta.requiresAuth !== false);
+const userName = computed(() => profile.value?.username ?? "未登录");
+const userInitial = computed(() => userName.value.slice(0, 1).toUpperCase());
 </script>
