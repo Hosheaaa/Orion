@@ -17,6 +17,7 @@ type Config struct {
 	Google        GoogleConfig
 	Redis         RedisConfig
 	Cache         CacheConfig
+	Database      DatabaseConfig
 	ViewerBaseURL string
 }
 
@@ -55,6 +56,14 @@ type CacheConfig struct {
 	WSPingInterval string
 }
 
+// DatabaseConfig 数据库配置
+type DatabaseConfig struct {
+	URL             string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
+
 // Load 加载配置（从环境变量）
 func Load() (*Config, error) {
 	if err := loadEnvFileOnce(".env"); err != nil {
@@ -64,6 +73,9 @@ func Load() (*Config, error) {
 	port := getEnvAsInt("APP_PORT", 8080)
 	env := getEnv("APP_ENV", "development")
 	allowedOrigins := getEnvAsStringSlice("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000"})
+	dbMaxOpen := getEnvAsInt("DATABASE_MAX_OPEN_CONNS", 10)
+	dbMaxIdle := getEnvAsInt("DATABASE_MAX_IDLE_CONNS", 5)
+	dbConnLifetime := getEnvAsDuration("DATABASE_CONN_MAX_LIFETIME", 30*time.Minute)
 
 	return &Config{
 		Server: ServerConfig{
@@ -90,6 +102,12 @@ func Load() (*Config, error) {
 		Cache: CacheConfig{
 			HistoryTTL:     getEnv("HISTORY_CACHE_TTL", "5m"),
 			WSPingInterval: getEnv("WS_PING_INTERVAL", "30s"),
+		},
+		Database: DatabaseConfig{
+			URL:             getEnv("DATABASE_URL", ""),
+			MaxOpenConns:    dbMaxOpen,
+			MaxIdleConns:    dbMaxIdle,
+			ConnMaxLifetime: dbConnLifetime,
 		},
 		ViewerBaseURL: getEnv("VIEWER_BASE_URL", "http://localhost:3000"),
 	}, nil
@@ -236,6 +254,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.RefreshTokenTTL <= 0 {
 		return fmt.Errorf("REFRESH_TOKEN_TTL 必须大于 0")
+	}
+	if c.Database.URL == "" {
+		return fmt.Errorf("DATABASE_URL 未配置")
 	}
 	return nil
 }

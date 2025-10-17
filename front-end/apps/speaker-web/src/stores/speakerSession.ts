@@ -1,6 +1,5 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { generateSpeakerToken } from "@/services/speakerConsoleService";
 import { envConfig } from "@/config/env";
 import {
   calculateRMS,
@@ -8,6 +7,12 @@ import {
   floatTo16BitPCM,
   pcm16ToBase64
 } from "@/services/audioUtils";
+import {
+  loadSpeakerToken,
+  saveSpeakerToken,
+  clearSpeakerToken,
+  type ManualSpeakerTokenRecord
+} from "@/services/manualSpeakerTokenStorage";
 
 export type ActivityStatus = "draft" | "published" | "closed";
 
@@ -49,7 +54,7 @@ export const useSpeakerSessionStore = defineStore("speakerSession", () => {
   const connection = ref<ConnectionSnapshot | null>(null);
   const subtitles = ref<SubtitleItem[]>([]);
   const speakerToken = ref<string | null>(null);
-  const speakerTokenExpiresAt = ref<string | null>(null);
+  const speakerTokenUpdatedAt = ref<string | null>(null);
   const lastError = ref<string | null>(null);
 
   const websocket = ref<WebSocket | null>(null);
@@ -78,10 +83,15 @@ export const useSpeakerSessionStore = defineStore("speakerSession", () => {
   function selectActivity(activity: ActivitySummary) {
     currentActivity.value = activity;
     speakerToken.value = null;
-    speakerTokenExpiresAt.value = null;
+    speakerTokenUpdatedAt.value = null;
     subtitles.value = [];
     if (connection.value?.status === "connected") {
       connection.value = defaultConnectionSnapshot();
+    }
+
+    const stored = loadSpeakerToken(activity.id);
+    if (stored) {
+      applyStoredSpeakerToken(stored);
     }
   }
 
@@ -98,21 +108,36 @@ export const useSpeakerSessionStore = defineStore("speakerSession", () => {
     };
   }
 
-  async function ensureSpeakerToken() {
-    const activity = currentActivity.value;
-    if (!activity) return null;
+  function applyStoredSpeakerToken(record: ManualSpeakerTokenRecord) {
+    speakerToken.value = record.token;
+    speakerTokenUpdatedAt.value = record.updatedAt ?? null;
+  }
 
-    if (speakerToken.value && speakerTokenExpiresAt.value) {
-      const expiresAt = new Date(speakerTokenExpiresAt.value).getTime();
-      if (expiresAt - Date.now() > 60_000) {
-        return speakerToken.value;
-      }
+  function setManualSpeakerToken(token: string) {
+    if (!currentActivity.value) {
+      throw new Error("请先选择活动后再输入推流令牌。");
     }
 
-    const data = await generateSpeakerToken(activity.id);
-    speakerToken.value = data.token;
-    speakerTokenExpiresAt.value = data.expiresAt;
-    return data.token;
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new Error("推流令牌不能为空。");
+    }
+
+    const record: ManualSpeakerTokenRecord = {
+      token: trimmed,
+      updatedAt: new Date().toISOString()
+    };
+    applyStoredSpeakerToken(record);
+    saveSpeakerToken(currentActivity.value.id, record);
+  }
+
+  function clearManualSpeakerToken() {
+    if (!currentActivity.value) {
+      return;
+    }
+    speakerToken.value = null;
+    speakerTokenUpdatedAt.value = null;
+    clearSpeakerToken(currentActivity.value.id);
   }
 
   async function startStreaming() {
@@ -125,15 +150,15 @@ export const useSpeakerSessionStore = defineStore("speakerSession", () => {
       throw new Error("请先选择活动后再开始推流。");
     }
 
+    const token = speakerToken.value?.trim();
+    if (!token) {
+      throw new Error("请先输入有效的推流令牌，再尝试开始推流。");
+    }
+
     streamingStatus.value = "connecting";
     lastError.value = null;
 
     try {
-      const token = await ensureSpeakerToken();
-      if (!token) {
-        throw new Error("未能获取到有效的推流令牌。");
-      }
-
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -423,11 +448,12 @@ export const useSpeakerSessionStore = defineStore("speakerSession", () => {
     selectActivity,
     startStreaming,
     stopStreaming,
-    ensureSpeakerToken,
     updateMicLevel,
     pushSubtitle,
+    setManualSpeakerToken,
+    clearManualSpeakerToken,
     speakerToken,
-    speakerTokenExpiresAt,
+    speakerTokenUpdatedAt,
     streamingStatus,
     lastError
   };

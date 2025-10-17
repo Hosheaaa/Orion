@@ -15,7 +15,9 @@ function calcExpiry(expiresIn: number) {
 
 export const useAuthStore = defineStore("auth", () => {
   const tokens = ref<StoredTokens | null>(loadTokens());
-  const profile = ref<{ username: string } | null>(tokens.value ? { username: "管理员" } : null);
+  const profile = ref<{ username: string } | null>(
+    tokens.value?.username ? { username: tokens.value.username } : null
+  );
   const loading = ref(false);
 
   if (tokens.value) {
@@ -36,7 +38,8 @@ export const useAuthStore = defineStore("auth", () => {
       const stored: StoredTokens = {
         accessToken: response.accessToken,
         refreshToken: response.refreshToken,
-        expiresAt: calcExpiry(response.expiresIn)
+        expiresAt: calcExpiry(response.expiresIn),
+        username: form.username
       };
       tokens.value = stored;
       profile.value = {
@@ -51,15 +54,20 @@ export const useAuthStore = defineStore("auth", () => {
 
   async function refresh() {
     if (!tokens.value) return;
+    const currentUsername = tokens.value.username;
     const response = await refreshRequest(tokens.value.refreshToken);
     const stored: StoredTokens = {
       accessToken: response.accessToken,
       refreshToken: response.refreshToken,
-      expiresAt: calcExpiry(response.expiresIn)
+      expiresAt: calcExpiry(response.expiresIn),
+      username: currentUsername
     };
     tokens.value = stored;
     saveTokens(stored);
     setCurrentTokens(stored);
+    if (currentUsername) {
+      profile.value = { username: currentUsername };
+    }
   }
 
   function logout() {

@@ -60,12 +60,17 @@ async function handleSubmit() {
       password: form.password
     });
     message?.success("登录成功，正在跳转...");
-    router.replace({ name: "speaker-console" });
+    const target = isAdminUser(form.username) ? { name: "admin-dashboard" } : { name: "speaker-console" };
+    router.replace(target);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     error.value = msg || "登录失败，请稍后重试。";
     message?.error(error.value);
   }
+}
+
+function isAdminUser(username: string) {
+  return username.trim().toLowerCase() === "admin";
 }
 </script>
 

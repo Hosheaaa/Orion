@@ -78,10 +78,37 @@
             </li>
           </ul>
         </div>
+        <div class="control-card token-card">
+          <header>
+            <h3>推流令牌</h3>
+            <span>从管理员获取 UUID 后录入，方可建立推流</span>
+          </header>
+          <form class="token-form" @submit.prevent="saveManualToken">
+            <label>
+              令牌
+              <input
+                v-model="tokenInput"
+                placeholder="请输入演讲者推流令牌"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <div class="token-actions">
+              <button type="submit" class="primary" :disabled="!tokenInput.trim()">
+                保存令牌
+              </button>
+              <button type="button" class="ghost" @click="clearManualToken" :disabled="!tokenInput">
+                清除
+              </button>
+            </div>
+          </form>
+          <p class="token-status">{{ tokenStatusText }}</p>
+        </div>
         <button
           class="recorder__cta"
           type="button"
           :class="{ 'is-live': store.isStreaming }"
+          :disabled="!store.isStreaming && !hasToken"
           @click="toggleStreaming"
         >
           <span>{{ store.isStreaming ? "停止推流" : "开始推流" }}</span>
@@ -107,12 +134,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject } from "vue";
+import { computed, inject, ref, watch } from "vue";
 import { useSpeakerSessionStore } from "@/stores/speakerSession";
 import type { MessageApi } from "naive-ui";
 
 const store = useSpeakerSessionStore();
 const message = inject<MessageApi | undefined>("naive-message");
+
+const tokenInput = ref("");
 
 const statusText = computed(() =>
   store.isStreaming ? "推流中 · 正在向后端发送音频帧" : "待机 · 未开始推流"
@@ -120,6 +149,31 @@ const statusText = computed(() =>
 
 const statusClass = computed(() =>
   store.isStreaming ? "is-live" : "is-idle"
+);
+
+const hasToken = computed(() => !!store.speakerToken);
+
+const tokenStatusText = computed(() => {
+  if (!store.speakerToken) {
+    return "尚未录入推流令牌";
+  }
+
+  const parts: string[] = [];
+  if (store.speakerTokenUpdatedAt) {
+    parts.push(`更新于 ${formatDisplayTime(store.speakerTokenUpdatedAt)}`);
+  }
+  if (!parts.length) {
+    parts.push("令牌已保存，可开始推流");
+  }
+  return parts.join(" · ");
+});
+
+watch(
+  () => store.speakerToken,
+  (value) => {
+    tokenInput.value = value ?? "";
+  },
+  { immediate: true }
 );
 
 async function toggleStreaming() {
@@ -138,6 +192,22 @@ async function toggleStreaming() {
   }
 }
 
+function saveManualToken() {
+  try {
+    store.setManualSpeakerToken(tokenInput.value);
+    message?.success?.("推流令牌已保存。");
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    message?.error?.(msg || "保存推流令牌失败，请重试。");
+  }
+}
+
+function clearManualToken() {
+  store.clearManualSpeakerToken();
+  tokenInput.value = "";
+  message?.info?.("推流令牌已清除。");
+}
+
 function barStyle(index: number) {
   const base = Math.sin((index / 20) * Math.PI);
   const scale = store.micLevel * 0.8 + 0.2;
@@ -147,6 +217,19 @@ function barStyle(index: number) {
     height: `${height}px`,
     animationDelay: `${delay}s`
   };
+}
+
+function formatDisplayTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 </script>
 
@@ -331,6 +414,10 @@ function barStyle(index: number) {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
+.token-card {
+  background: rgba(15, 23, 42, 0.68);
+}
+
 .control-card header h3 {
   margin: 0;
   font-size: 16px;
@@ -391,6 +478,13 @@ function barStyle(index: number) {
     0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
+.recorder__cta:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .recorder__cta.is-live {
   border-color: rgba(16, 185, 129, 0.45);
   background: rgba(16, 185, 129, 0.18);
@@ -412,6 +506,76 @@ function barStyle(index: number) {
 .recorder__secondary:hover {
   transform: translateY(-2px);
   background: rgba(148, 163, 184, 0.24);
+}
+
+.token-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.token-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.75);
+}
+
+.token-form input {
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.35);
+  color: #e2e8f0;
+  font-size: 14px;
+}
+
+.token-form input::placeholder {
+  color: rgba(226, 232, 240, 0.5);
+}
+
+.token-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.token-actions .primary,
+.token-actions .ghost {
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.token-actions .primary {
+  border: none;
+  background: linear-gradient(135deg, #34d399, #10b981);
+  color: #0f172a;
+}
+
+.token-actions .primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.token-actions .ghost {
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: rgba(15, 23, 42, 0.22);
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.token-actions .ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.token-status {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.7);
+  line-height: 1.6;
 }
 
 @media (max-width: 1024px) {

@@ -1,41 +1,51 @@
 package app
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/hoshea/orion-backend/internal/domain"
 )
 
 const (
-	defaultSpeakerTokenTTL = 2 * time.Hour
+	defaultSpeakerTokenTTL = 24 * time.Hour
 	defaultViewerTokenTTL  = 120 * time.Minute
 	viewerInviteCodeLength = 6
 )
 
-// AccessService 负责活动令牌与观众入口管理（内存实现）
+// AccessRepository 定义令牌与入口的持久化接口
+type AccessRepository interface {
+	CreateToken(ctx context.Context, token *domain.ActivityToken) error
+	ListTokens(ctx context.Context, activityID string) ([]*domain.ActivityToken, error)
+	FindTokenByID(ctx context.Context, id string) (*domain.ActivityToken, error)
+	FindToken(ctx context.Context, activityID string, tokenType domain.TokenType, value string) (*domain.ActivityToken, error)
+	UpdateTokenStatus(ctx context.Context, id string, status domain.TokenStatus) error
+	RevokeTokens(ctx context.Context, activityID string, tokenType domain.TokenType) error
+	UpsertViewerEntry(ctx context.Context, entry *domain.ViewerEntry) error
+	GetViewerEntry(ctx context.Context, activityID string) (*domain.ViewerEntry, error)
+}
+
+// AccessService 负责活动令牌与观众入口管理
 type AccessService struct {
 	activityRepo domain.ActivityRepository
+	repo         AccessRepository
 	viewerBase   string
-	mu           sync.RWMutex
-	tokens       map[string][]*domain.ActivityToken
-	viewerEntry  map[string]*domain.ViewerEntry
 }
 
 // NewAccessService 创建访问控制服务
-func NewAccessService(activityRepo domain.ActivityRepository, viewerBaseURL string) *AccessService {
+func NewAccessService(activityRepo domain.ActivityRepository, repo AccessRepository, viewerBaseURL string) *AccessService {
 	base := strings.TrimRight(viewerBaseURL, "/")
 	return &AccessService{
 		activityRepo: activityRepo,
+		repo:         repo,
 		viewerBase:   base,
-		tokens:       make(map[string][]*domain.ActivityToken),
-		viewerEntry:  make(map[string]*domain.ViewerEntry),
 	}
 }
 
@@ -46,22 +56,55 @@ func (s *AccessService) GenerateSpeakerToken(activityID string) (*domain.Activit
 	}
 
 	now := time.Now()
-	value := uuid.NewString()
 	token := &domain.ActivityToken{
 		ID:         uuid.NewString(),
 		ActivityID: activityID,
 		Type:       domain.TokenTypeSpeaker,
-		Value:      value,
+		Value:      uuid.NewString(),
 		CreatedAt:  now,
 		ExpiresAt:  now.Add(defaultSpeakerTokenTTL),
 		Status:     domain.TokenStatusActive,
 	}
 
-	s.mu.Lock()
-	s.tokens[activityID] = append(s.tokens[activityID], token)
-	s.mu.Unlock()
-
+	if err := s.repo.CreateToken(context.Background(), token); err != nil {
+		return nil, err
+	}
 	return cloneToken(token), nil
+}
+
+// RevokeSpeakerTokens 撤销活动下所有演讲者令牌
+func (s *AccessService) RevokeSpeakerTokens(activityID string) error {
+	if _, err := s.activityRepo.FindByID(activityID); err != nil {
+		return err
+	}
+
+	return s.repo.RevokeTokens(context.Background(), activityID, domain.TokenTypeSpeaker)
+}
+
+// RevokeSpeakerToken 撤销单个演讲者令牌
+func (s *AccessService) RevokeSpeakerToken(activityID, tokenID string) error {
+	if tokenID == "" {
+		return errors.New("令牌ID不能为空")
+	}
+
+	token, err := s.repo.FindTokenByID(context.Background(), tokenID)
+	if err != nil {
+		return err
+	}
+	if token == nil || token.ActivityID != activityID {
+		return errors.New("演讲者令牌不存在")
+	}
+	if token.Type != domain.TokenTypeSpeaker {
+		return errors.New("令牌类型不匹配")
+	}
+	if token.Status == domain.TokenStatusRevoked {
+		return nil
+	}
+
+	if err := s.repo.UpdateTokenStatus(context.Background(), tokenID, domain.TokenStatusRevoked); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GenerateViewerToken 生成观众邀请码
@@ -76,7 +119,7 @@ func (s *AccessService) GenerateViewerToken(activityID string, req *domain.Gener
 	}
 
 	now := time.Now()
-	code := generateInviteCode(viewerInviteCodeLength)
+	code := strings.ToUpper(generateInviteCode(viewerInviteCodeLength))
 	token := &domain.ActivityToken{
 		ID:         uuid.NewString(),
 		ActivityID: activityID,
@@ -91,7 +134,7 @@ func (s *AccessService) GenerateViewerToken(activityID string, req *domain.Gener
 	}
 
 	shareURL := s.buildShareURL(activityID, code)
-	viewerEntry := &domain.ViewerEntry{
+	entry := &domain.ViewerEntry{
 		ActivityID: activityID,
 		ShareURL:   shareURL,
 		QRType:     "text",
@@ -100,34 +143,38 @@ func (s *AccessService) GenerateViewerToken(activityID string, req *domain.Gener
 		UpdatedAt:  now,
 	}
 
-	s.mu.Lock()
-	// 将旧的观众令牌标记为撤销
-	for _, existing := range s.tokens[activityID] {
-		if existing.Type == domain.TokenTypeViewer && existing.Status == domain.TokenStatusActive {
-			existing.Status = domain.TokenStatusRevoked
-		}
+	ctx := context.Background()
+
+	if err := s.repo.RevokeTokens(ctx, activityID, domain.TokenTypeViewer); err != nil {
+		return nil, err
 	}
-	s.tokens[activityID] = append(s.tokens[activityID], token)
-	s.viewerEntry[activityID] = viewerEntry
-	s.mu.Unlock()
+	if err := s.repo.CreateToken(ctx, token); err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpsertViewerEntry(ctx, entry); err != nil {
+		return nil, err
+	}
 
 	return cloneToken(token), nil
 }
 
-// ListTokens 列出活动的所有令牌
+// ListTokens 列出活动的所有令牌（自动刷新过期状态）
 func (s *AccessService) ListTokens(activityID string) ([]*domain.ActivityToken, error) {
 	if _, err := s.activityRepo.FindByID(activityID); err != nil {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx := context.Background()
+	tokens, err := s.repo.ListTokens(ctx, activityID)
+	if err != nil {
+		return nil, err
+	}
 
-	tokens := s.tokens[activityID]
-	result := make([]*domain.ActivityToken, 0, len(tokens))
 	now := time.Now()
+	result := make([]*domain.ActivityToken, 0, len(tokens))
 	for _, token := range tokens {
 		if token.Status == domain.TokenStatusActive && now.After(token.ExpiresAt) {
+			_ = s.repo.UpdateTokenStatus(ctx, token.ID, domain.TokenStatusExpired)
 			token.Status = domain.TokenStatusExpired
 		}
 		result = append(result, cloneToken(token))
@@ -143,14 +190,14 @@ func (s *AccessService) GetViewerEntry(activityID string) (*domain.ViewerEntry, 
 		return nil, err
 	}
 
-	s.mu.RLock()
-	entry, ok := s.viewerEntry[activityID]
-	s.mu.RUnlock()
-	if ok {
+	entry, err := s.repo.GetViewerEntry(context.Background(), activityID)
+	if err != nil {
+		return nil, err
+	}
+	if entry != nil {
 		return cloneViewerEntry(entry), nil
 	}
 
-	// 默认返回活动链接
 	defaultEntry := &domain.ViewerEntry{
 		ActivityID: activityID,
 		ShareURL:   activity.ViewerURL,
@@ -168,24 +215,25 @@ func (s *AccessService) RevokeViewerEntry(activityID string) (*domain.ViewerEntr
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.viewerEntry[activityID]
-	if !ok {
+	ctx := context.Background()
+	entry, err := s.repo.GetViewerEntry(ctx, activityID)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil {
 		return nil, errors.New("观众入口尚未生成")
 	}
+
 	entry.Status = domain.ViewerEntryStatusRevoked
-	entry.UpdatedAt = time.Now()
 	entry.QRContent = ""
+	entry.UpdatedAt = time.Now()
 
-	// 同时撤销所有观众令牌
-	for _, token := range s.tokens[activityID] {
-		if token.Type == domain.TokenTypeViewer && token.Status == domain.TokenStatusActive {
-			token.Status = domain.TokenStatusRevoked
-		}
+	if err := s.repo.RevokeTokens(ctx, activityID, domain.TokenTypeViewer); err != nil {
+		return nil, err
 	}
-
+	if err := s.repo.UpsertViewerEntry(ctx, entry); err != nil {
+		return nil, err
+	}
 	return cloneViewerEntry(entry), nil
 }
 
@@ -195,29 +243,33 @@ func (s *AccessService) ActivateViewerEntry(activityID string) (*domain.ViewerEn
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.viewerEntry[activityID]
-	if !ok {
+	ctx := context.Background()
+	entry, err := s.repo.GetViewerEntry(ctx, activityID)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil {
 		return nil, errors.New("观众入口尚未生成")
 	}
 
+	tokens, err := s.repo.ListTokens(ctx, activityID)
+	if err != nil {
+		return nil, err
+	}
 	var latest *domain.ActivityToken
-	for i := len(s.tokens[activityID]) - 1; i >= 0; i-- {
-		t := s.tokens[activityID][i]
+	for _, t := range tokens {
 		if t.Type == domain.TokenTypeViewer {
-			latest = t
-			break
+			if latest == nil || t.CreatedAt.After(latest.CreatedAt) {
+				latest = t
+			}
 		}
 	}
-
 	if latest == nil {
 		return nil, errors.New("请先生成观众邀请码")
 	}
 
 	if time.Now().After(latest.ExpiresAt) {
-		latest.Status = domain.TokenStatusExpired
+		_ = s.repo.UpdateTokenStatus(ctx, latest.ID, domain.TokenStatusExpired)
 		return nil, errors.New("最新观众邀请码已过期，请重新生成")
 	}
 
@@ -226,6 +278,10 @@ func (s *AccessService) ActivateViewerEntry(activityID string) (*domain.ViewerEn
 	entry.QRType = "text"
 	entry.QRContent = encodeTextAsDataURL(entry.ShareURL)
 	entry.UpdatedAt = time.Now()
+
+	if err := s.repo.UpsertViewerEntry(ctx, entry); err != nil {
+		return nil, err
+	}
 	return cloneViewerEntry(entry), nil
 }
 
@@ -252,37 +308,31 @@ func (s *AccessService) ValidateSpeakerSession(activityID, tokenValue, language 
 		return nil, fmt.Errorf("演讲语言与活动配置不一致: %s", language)
 	}
 
-	now := time.Now()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	tokens := s.tokens[activityID]
-	for _, token := range tokens {
-		if token.Status == domain.TokenStatusActive && now.After(token.ExpiresAt) {
-			token.Status = domain.TokenStatusExpired
-		}
-
-		if token.Type != domain.TokenTypeSpeaker {
-			continue
-		}
-		if token.Value != tokenValue {
-			continue
-		}
-
-		switch token.Status {
-		case domain.TokenStatusActive:
-			return activity, nil
-		case domain.TokenStatusRevoked:
-			return nil, errors.New("演讲者令牌已被撤销")
-		case domain.TokenStatusExpired:
-			return nil, errors.New("演讲者令牌已过期")
-		default:
-			return nil, errors.New("演讲者令牌状态异常")
-		}
+	ctx := context.Background()
+	token, err := s.repo.FindToken(ctx, activityID, domain.TokenTypeSpeaker, tokenValue)
+	if err != nil {
+		return nil, err
+	}
+	if token == nil {
+		return nil, errors.New("演讲者令牌无效")
 	}
 
-	return nil, errors.New("演讲者令牌无效")
+	now := time.Now()
+	if token.Status == domain.TokenStatusActive && now.After(token.ExpiresAt) {
+		_ = s.repo.UpdateTokenStatus(ctx, token.ID, domain.TokenStatusExpired)
+		token.Status = domain.TokenStatusExpired
+	}
+
+	switch token.Status {
+	case domain.TokenStatusActive:
+		return activity, nil
+	case domain.TokenStatusRevoked:
+		return nil, errors.New("演讲者令牌已被撤销")
+	case domain.TokenStatusExpired:
+		return nil, errors.New("演讲者令牌已过期")
+	default:
+		return nil, errors.New("演讲者令牌状态异常")
+	}
 }
 
 // ValidateViewerSession 校验观众接入令牌与语言
@@ -309,42 +359,39 @@ func (s *AccessService) ValidateViewerSession(activityID, tokenValue, language s
 		return nil, fmt.Errorf("活动未启用语言: %s", language)
 	}
 
-	now := time.Now()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.viewerEntry[activityID]
-	if !ok || entry.Status != domain.ViewerEntryStatusActive {
+	ctx := context.Background()
+	entry, err := s.repo.GetViewerEntry(ctx, activityID)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil || entry.Status != domain.ViewerEntryStatusActive {
 		return nil, errors.New("观众入口未启用，请联系主办方")
 	}
 
-	tokens := s.tokens[activityID]
-	for _, token := range tokens {
-		if token.Status == domain.TokenStatusActive && now.After(token.ExpiresAt) {
-			token.Status = domain.TokenStatusExpired
-		}
-
-		if token.Type != domain.TokenTypeViewer {
-			continue
-		}
-		if strings.ToUpper(token.Value) != normalizedCode {
-			continue
-		}
-
-		switch token.Status {
-		case domain.TokenStatusActive:
-			return activity, nil
-		case domain.TokenStatusRevoked:
-			return nil, errors.New("观众令牌已被撤销")
-		case domain.TokenStatusExpired:
-			return nil, errors.New("观众令牌已过期")
-		default:
-			return nil, errors.New("观众令牌状态异常")
-		}
+	token, err := s.repo.FindToken(ctx, activityID, domain.TokenTypeViewer, normalizedCode)
+	if err != nil {
+		return nil, err
+	}
+	if token == nil {
+		return nil, errors.New("观众令牌无效")
 	}
 
-	return nil, errors.New("观众令牌无效")
+	now := time.Now()
+	if token.Status == domain.TokenStatusActive && now.After(token.ExpiresAt) {
+		_ = s.repo.UpdateTokenStatus(ctx, token.ID, domain.TokenStatusExpired)
+		token.Status = domain.TokenStatusExpired
+	}
+
+	switch token.Status {
+	case domain.TokenStatusActive:
+		return activity, nil
+	case domain.TokenStatusRevoked:
+		return nil, errors.New("观众令牌已被撤销")
+	case domain.TokenStatusExpired:
+		return nil, errors.New("观众令牌已过期")
+	default:
+		return nil, errors.New("观众令牌状态异常")
+	}
 }
 
 func cloneToken(src *domain.ActivityToken) *domain.ActivityToken {

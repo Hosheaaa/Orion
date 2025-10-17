@@ -36,6 +36,29 @@ func (h *ManagementHandler) GenerateSpeakerToken(c *gin.Context) {
 	})
 }
 
+// RevokeSpeakerTokens 撤销演讲者令牌
+func (h *ManagementHandler) RevokeSpeakerTokens(c *gin.Context) {
+	activityID := c.Param("id")
+	if err := h.accessService.RevokeSpeakerTokens(activityID); err != nil {
+		writeError(c, http.StatusBadRequest, "REVOKE_SPEAKER_TOKEN_FAILED", err.Error())
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// RevokeSpeakerToken 撤销单个演讲者令牌
+func (h *ManagementHandler) RevokeSpeakerToken(c *gin.Context) {
+	activityID := c.Param("id")
+	tokenID := c.Param("tokenId")
+	if err := h.accessService.RevokeSpeakerToken(activityID, tokenID); err != nil {
+		writeError(c, http.StatusBadRequest, "REVOKE_SPEAKER_TOKEN_FAILED", err.Error())
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 // GenerateViewerToken 生成观众邀请码
 func (h *ManagementHandler) GenerateViewerToken(c *gin.Context) {
 	activityID := c.Param("id")

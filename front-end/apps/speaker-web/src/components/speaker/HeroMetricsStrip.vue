@@ -73,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import type { HeroInsight } from "@/services/mockSpeakerService";
+import type { HeroInsight } from "@/services/speakerConsoleService";
 
 defineProps<{
   metrics: HeroInsight[];

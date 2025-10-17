@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import type { GuidanceChecklistItem } from "@/services/mockSpeakerService";
+import type { GuidanceChecklistItem } from "@/services/speakerConsoleService";
 
 defineProps<{
   items: GuidanceChecklistItem[];

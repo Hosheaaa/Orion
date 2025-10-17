@@ -5,6 +5,7 @@ export interface StoredTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  username?: string;
 }
 
 const TOKEN_KEY = "orion:speaker:tokens";

@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoshea/orion-backend/internal/api"
 	"github.com/hoshea/orion-backend/internal/infra/config"
+	"github.com/hoshea/orion-backend/internal/infra/database"
 )
 
 func main() {
@@ -21,8 +22,22 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// 初始化数据库
+	db, err := database.Open(cfg.Database)
+	if err != nil {
+		log.Fatalf("Failed to connect database: %v", err)
+	}
+	defer db.Close()
+
+	if err := database.Migrate(context.Background(), db); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+
 	// 初始化路由
-	router := api.SetupRouter(cfg)
+	router, err := api.SetupRouter(cfg, db)
+	if err != nil {
+		log.Fatalf("Failed to setup router: %v", err)
+	}
 
 	// 创建 HTTP 服务器
 	srv := &http.Server{

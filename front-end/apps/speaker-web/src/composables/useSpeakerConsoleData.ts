@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/vue-query";
 import {
+  fetchConsoleActivities,
+  fetchGuidanceChecklist,
   fetchHeroInsights,
-  fetchSubtitleHistory,
-  fetchGuidanceChecklist
-} from "@/services/mockSpeakerService";
-import { fetchConsoleActivities } from "@/services/speakerConsoleService";
+  fetchSubtitleHistory
+} from "@/services/speakerConsoleService";
 
 export function useSpeakerActivities() {
   return useQuery({

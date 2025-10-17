@@ -88,26 +88,37 @@
 ### 3.9 生成演讲者令牌
 - `POST /api/v1/activities/{id}/tokens/speaker`
 - 响应：`{ "token": "jwt", "expiresAt": "..." }`
+- 说明：默认有效期 24 小时，可在后台再次生成刷新令牌。
 
-### 3.10 生成观众邀请码
+### 3.10 撤销单个演讲者令牌
+- `POST /api/v1/activities/{id}/tokens/speaker/{tokenId}/revoke`
+- 响应：`204 No Content`
+- 说明：只能撤销“active” 状态的令牌，撤销后需重新生成。
+
+### 3.11 撤销全部演讲者令牌
+- `POST /api/v1/activities/{id}/tokens/speaker/revoke`
+- 响应：`204 No Content`
+- 说明：批量撤销该活动下所有仍有效的演讲者令牌。
+
+### 3.12 生成观众邀请码
 - `POST /api/v1/activities/{id}/tokens/viewer`
 - 请求（可选字段）：`{ "maxAudience": 50, "ttlMinutes": 120 }`
 - 响应：`{ "code": "ABCDE", "expiresAt": "..." }`
 - 说明：未传 body 时使用默认有效期（120 分钟）且不限制观众数量；新邀请码生成后旧邀请码会被标记为 revoked。
 
-### 3.11 查询令牌列表
+### 3.13 查询令牌列表
 - `GET /api/v1/activities/{id}/tokens`
 - 响应：令牌/邀请码状态列表。
 
-### 3.12 上传封面图片
+### 3.14 上传封面图片
 - `POST /api/v1/uploads/cover`
 - 当前状态：功能占位，接口返回 501，提示“封面上传功能尚未接入文件存储”。
 
-### 3.13 获取语言列表
+### 3.15 获取语言列表
 - `GET /api/v1/languages`
 - 响应：`[{ "code": "en", "name": "英语" }, ...]`
 
-### 3.14 获取观众入口二维码
+### 3.16 获取观众入口二维码
 - `GET /api/v1/activities/{id}/viewer-entry`
 - 响应：
 ```json
@@ -122,12 +133,12 @@
 ```
 - 说明：当前版本返回文本格式的 QR 数据 URL 占位，后续将接入二维码图片生成。
 
-### 3.15 失效观众入口二维码
+### 3.17 失效观众入口二维码
 - `POST /api/v1/activities/{id}/viewer-entry/revoke`
 - 响应：`{ "status": "revoked", "updatedAt": "..." }`
 - 说明：活动关闭时可由系统自动调用，或管理员手动触发。
 
-### 3.16 重新启用观众入口二维码
+### 3.18 重新启用观众入口二维码
 - `POST /api/v1/activities/{id}/viewer-entry/activate`
 - 响应：`{ "status": "active", "shareUrl": "...", "qrContent": "data:text/plain;base64,...", "updatedAt": "..." }`
 - 说明：若最新邀请码已过期会返回 400 并提示重新生成。

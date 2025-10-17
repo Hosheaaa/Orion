@@ -10,6 +10,18 @@ Orion 实时翻译系统后端服务。
 go mod tidy
 ```
 
+### 准备数据库
+
+```bash
+# 确保本地 PostgreSQL 16+ 已启动，默认监听 5432
+# 创建开发账号与数据库（如已存在可跳过）
+psql -d postgres -c "CREATE ROLE orion WITH LOGIN PASSWORD 'orion_dev_local';"
+psql -d postgres -c "CREATE DATABASE orion_dev OWNER orion;"
+
+# 可选：为数据库设置默认时区
+psql -d postgres -c "ALTER DATABASE orion_dev SET timezone TO 'Asia/Shanghai';"
+```
+
 ### 配置环境变量
 
 ```bash
@@ -71,6 +83,12 @@ backend/
 ```bash
 curl http://localhost:8080/health
 ```
+
+### 开发环境端口约定
+
+- `8080`：后端 REST / WebSocket 服务（本仓库）
+- `5432`：PostgreSQL 开发数据库（本地实例）
+- `5173`：演讲者端 Vite 开发服务器（`front-end/apps/speaker-web`）
 
 完整 API 文档请参考 `/docs/API 规范.md`
 

@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/hoshea/orion-backend/internal/api/handler"
 	"github.com/hoshea/orion-backend/internal/api/middleware"
 	"github.com/hoshea/orion-backend/internal/app"
@@ -14,7 +16,7 @@ import (
 )
 
 // SetupRouter 设置路由
-func SetupRouter(cfg *config.Config) *gin.Engine {
+func SetupRouter(cfg *config.Config, db *sql.DB) (*gin.Engine, error) {
 	// 初始化认证服务
 	authService, err := app.NewAuthService(cfg)
 	if err != nil {
@@ -23,11 +25,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	authHandler := handler.NewAuthHandler(authService)
 
 	// 初始化依赖
-	activityRepo := repository.NewMemoryActivityRepository()
+	activityRepo := repository.NewPostgresActivityRepository(db)
 	activityService := app.NewActivityService(activityRepo, cfg)
 	activityHandler := handler.NewActivityHandler(activityService)
-	accessService := app.NewAccessService(activityRepo, cfg.ViewerBaseURL)
+	accessRepo := repository.NewPostgresAccessRepository(db)
+	accessService := app.NewAccessService(activityRepo, accessRepo, cfg.ViewerBaseURL)
 	managementHandler := handler.NewManagementHandler(accessService)
+	consoleHandler := handler.NewSpeakerConsoleHandler()
 
 	// 初始化翻译管线（如果 API Key 存在）
 	var translationPipeline *app.TranslationPipeline
@@ -43,6 +47,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			translationPipeline = tp
 			log.Println("Translation pipeline initialized successfully")
 		}
+	} else {
+		translationPipeline = app.NewMockTranslationPipeline()
+		log.Println("Translation pipeline initialized in mock mode")
 	}
 
 	// 初始化字幕广播器
@@ -104,6 +111,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		tokens.Use(middleware.AuthRequired(authService))
 		{
 			tokens.POST("/speaker", managementHandler.GenerateSpeakerToken)
+			tokens.POST("/speaker/revoke", managementHandler.RevokeSpeakerTokens)
+			tokens.POST("/speaker/:tokenId/revoke", managementHandler.RevokeSpeakerToken)
 			tokens.POST("/viewer", managementHandler.GenerateViewerToken)
 			tokens.GET("", managementHandler.ListTokens)
 		}
@@ -126,6 +135,15 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 		// 语言列表
 		v1.GET("/languages", managementHandler.GetLanguages)
+
+		// 演讲者控制台辅助数据
+		console := v1.Group("/speaker-console")
+		console.Use(middleware.AuthRequired(authService))
+		{
+			console.GET("/hero-insights", consoleHandler.GetHeroInsights)
+			console.GET("/subtitle-history", consoleHandler.GetSubtitleHistory)
+			console.GET("/guidance", consoleHandler.GetGuidanceChecklist)
+		}
 	}
 
 	// WebSocket 路由
@@ -148,5 +166,5 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		}
 	}
 
-	return router
+	return router, nil
 }

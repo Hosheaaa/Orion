@@ -1,4 +1,4 @@
-import type { ActivitySummary } from "@/stores/speakerSession";
+import type { ActivitySummary, SubtitleItem } from "@/stores/speakerSession";
 import { fetchActivities } from "./activityService";
 import { httpClient } from "./httpClient";
 
@@ -26,6 +26,21 @@ export interface SpeakerTokenResponse {
   expiresAt: string;
 }
 
+export interface HeroInsight {
+  label: string;
+  value: string;
+  trend: "up" | "down" | "stable";
+  deltaText: string;
+  description: string;
+  accent: string;
+}
+
+export interface GuidanceChecklistItem {
+  title: string;
+  detail: string;
+  emphasis: "primary" | "success" | "warning";
+}
+
 /**
  * 拉取活动列表并转换为控制台可用的结构。
  */
@@ -50,4 +65,18 @@ export async function generateSpeakerToken(activityId: string) {
     `/api/v1/activities/${activityId}/tokens/speaker`
   );
   return data;
+}
+
+export async function fetchHeroInsights() {
+  return httpClient.get<HeroInsight[]>(`/api/v1/speaker-console/hero-insights`);
+}
+
+export async function fetchGuidanceChecklist() {
+  return httpClient.get<GuidanceChecklistItem[]>(`/api/v1/speaker-console/guidance`);
+}
+
+export async function fetchSubtitleHistory(activityId?: string) {
+  return httpClient.get<SubtitleItem[]>(`/api/v1/speaker-console/subtitle-history`, {
+    query: activityId ? { activityId } : undefined
+  });
 }

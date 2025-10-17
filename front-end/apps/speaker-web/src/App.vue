@@ -8,18 +8,24 @@
       <header class="app-shell__header">
         <div class="brand">
           <div class="brand__mark">Orion Live</div>
-          <span class="brand__tagline">实时多语演讲控制台</span>
+          <span class="brand__tagline">{{ activeNavLabel }}</span>
         </div>
         <nav class="primary-nav">
-          <a class="primary-nav__item is-active" href="#">演讲者面板</a>
-          <a class="primary-nav__item" href="#">观众概览</a>
-          <a class="primary-nav__item" href="#">设置</a>
+          <RouterLink
+            v-for="item in navItems"
+            :key="item.name"
+            :to="{ name: item.name }"
+            class="primary-nav__item"
+            :class="{ 'is-active': route.name === item.name }"
+          >
+            {{ item.label }}
+          </RouterLink>
         </nav>
         <div class="user-chip">
           <span class="user-chip__avatar">{{ userInitial }}</span>
           <div class="user-chip__meta">
             <span class="user-chip__name">{{ userName }}</span>
-            <span class="user-chip__session">实时演讲 • 控制台</span>
+            <span class="user-chip__session">{{ activeNavLabel }}</span>
           </div>
         </div>
       </header>
@@ -52,7 +58,20 @@ const route = useRoute();
 const auth = useAuthStore();
 const { profile, isAuthenticated } = storeToRefs(auth);
 
-const showShell = computed(() => isAuthenticated.value && route.meta.requiresAuth !== false);
+const navItems = [
+  {
+    name: "speaker-console",
+    label: "演讲者面板"
+  }
+];
+
+const showShell = computed(
+  () => isAuthenticated.value && route.meta.requiresAuth !== false && route.meta.shell !== false
+);
 const userName = computed(() => profile.value?.username ?? "未登录");
 const userInitial = computed(() => userName.value.slice(0, 1).toUpperCase());
+const activeNavLabel = computed(() => {
+  const current = navItems.find((item) => item.name === route.name);
+  return current?.label ?? "实时多语演讲控制台";
+});
 </script>
